@@ -83,6 +83,12 @@
     var v = document.getElementById('vista');
     v.textContent = '';
 
+    if (estado.cerrado) {
+      v.appendChild(texto('h1', 'Cita cerrada'));
+      v.appendChild(texto('p', 'Esta cita ya está gestionada. Para cualquier duda, contacte con el perito por WhatsApp.', 'sub'));
+      return;
+    }
+
     if (estado.cita && !cambiando) { pintarConfirmada(v); return; }
 
     v.appendChild(texto('h1', cambiando ? 'Cambiar la cita' : 'Reserve su videoperitación'));
