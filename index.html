@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>Reservar videoperitación</title>
+<style>
+  :root {
+    --fondo: #f4f6f8; --panel: #ffffff; --texto: #17212b; --suave: #5b6875;
+    --borde: #d8dee4; --marca: #0b6e69; --marca-claro: #e3f2f0; --error: #a8321e; --error-claro: #fbeae6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--fondo); color: var(--texto);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  main { max-width: 520px; margin: 0 auto; padding: 24px 16px 32px; }
+  h1 { font-size: 24px; line-height: 1.25; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 10px; color: var(--suave); font-weight: 600; }
+  p { margin: 0 0 12px; }
+  .sub { color: var(--suave); margin-bottom: 24px; }
+  .panel { background: var(--panel); border: 1px solid var(--borde); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .dias { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 20px; scrollbar-width: none; }
+  .dia, .hora, .btn { font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--borde); background: var(--panel); color: var(--texto); }
+  .dia { flex: 0 0 auto; padding: 10px 14px; min-height: 48px; text-align: center; }
+  .horas { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .hora { padding: 12px 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .dia[aria-pressed="true"], .hora[aria-pressed="true"] { background: var(--marca); border-color: var(--marca); color: #fff; }
+  button:focus-visible { outline: 3px solid var(--marca); outline-offset: 2px; }
+  .accion { margin-top: 20px; }
+  .btn { width: 100%; padding: 14px; font-weight: 600; }
+  .btn.principal { background: var(--marca); border-color: var(--marca); color: #fff; }
+  .btn:disabled { opacity: .6; cursor: default; }
+  .aviso { background: var(--error-claro); color: var(--error); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; }
+  .cita { background: var(--marca-claro); border-color: transparent; }
+  .cita strong { display: block; font-size: 22px; line-height: 1.3; }
+  .cita strong::first-letter { text-transform: uppercase; }
+  .resumen { font-size: 14px; color: var(--suave); margin-bottom: 8px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div id="vista"><p class="sub">Cargando disponibilidad…</p></div>
+</main>
+
+<script>
+  var API = 'https://script.google.com/macros/s/AKfycbxIj3iSO2k3fkSs6HwkhiexKyGybbCUyYgQ9UN-j4IuyvxL-UDZ11tNdIR3goMoi5ezRw/exec';
+  var TOKEN = new URLSearchParams(location.search).get('t') || '';
+  var estado = null, diaElegido = null, huecoElegido = null, cambiando = false, aviso = '';
+
+  var AVISOS = {
+    ocupado: 'Esa hora acaba de reservarse. Elija otra, por favor.',
+    no_cambiable: 'Su cita está demasiado próxima para cambiarla desde aquí. Contacte con el perito por WhatsApp.',
+    saturado: 'Hay mucha actividad en este momento. Inténtelo de nuevo en unos segundos.'
+  };
+
+  function texto(etiqueta, contenido, clase) {
+    var el = document.createElement(etiqueta);
+    el.textContent = contenido;
+    if (clase) el.className = clase;
+    return el;
+  }
+
+  function boton(contenido, clase, pulsado, alPulsar) {
+    var b = texto('button', contenido, clase);
+    b.type = 'button';
+    if (pulsado !== null) b.setAttribute('aria-pressed', String(pulsado));
+    b.addEventListener('click', alPulsar);
+    return b;
+  }
+
+  function pintarError(titulo, detalle) {
+    var v = document.getElementById('vista');
+    v.textContent = '';
+    v.appendChild(texto('h1', titulo));
+    v.appendChild(texto('p', detalle, 'sub'));
+  }
+
+  function pintar() {
+    var v = document.getElementById('vista');
+    v.textContent = '';
+
+    if (estado.cita && !cambiando) { pintarConfirmada(v); return; }
+
+    v.appendChild(texto('h1', cambiando ? 'Cambiar la cita' : 'Reserve su videoperitación'));
+    v.appendChild(texto('p', estado.perito ? 'Perito: ' + estado.perito : 'Elija el día y la hora que le vengan mejor.', 'sub'));
+    if (aviso) v.appendChild(texto('div', aviso, 'aviso'));
+
+    if (cambiando) {
+      v.appendChild(boton('Mantener mi cita actual', 'btn', null, function () {
+        cambiando = false; huecoElegido = null; aviso = ''; pintar();
+      }));
+      v.lastChild.style.marginBottom = '20px';
+    }
+
+    if (!estado.dias.length) {
+      v.appendChild(texto('div', 'Ahora mismo no quedan horas disponibles. Contacte con el perito por WhatsApp para fijar la cita.', 'panel'));
+      return;
+    }
+
+    if (!estado.dias.some(function (d) { return d.fecha === diaElegido; })) diaElegido = estado.dias[0].fecha;
+
+    v.appendChild(texto('h2', 'Día'));
+    var dias = texto('div', '', 'dias');
+    estado.dias.forEach(function (d) {
+      dias.appendChild(boton(d.etiqueta, 'dia', d.fecha === diaElegido, function () {
+        diaElegido = d.fecha; huecoElegido = null; pintar();
+      }));
+    });
+    v.appendChild(dias);
+
+    var dia = estado.dias.filter(function (d) { return d.fecha === diaElegido; })[0];
+    v.appendChild(texto('h2', 'Hora'));
+    var horas = texto('div', '', 'horas');
+    dia.horas.forEach(function (h) {
+      horas.appendChild(boton(h.hora, 'hora', !!huecoElegido && huecoElegido.id === h.id, function () {
+        huecoElegido = h; pintar();
+      }));
+    });
+    v.appendChild(horas);
+
+    // Siempre a la vista: desactivado hasta que se elige una hora.
+    var accion = texto('div', '', 'accion');
+    accion.appendChild(texto('p', huecoElegido ? dia.etiqueta + ' a las ' + huecoElegido.hora : 'Elija una hora para continuar.', 'resumen'));
+    var confirmacion = boton('Confirmar cita', 'btn principal', null, confirmar);
+    confirmacion.disabled = !huecoElegido;
+    accion.appendChild(confirmacion);
+    v.appendChild(accion);
+    if (huecoElegido) confirmacion.scrollIntoView({ block: 'nearest' });
+  }
+
+  function pintarConfirmada(v) {
+    v.appendChild(texto('h1', 'Cita reservada'));
+    v.appendChild(texto('p', estado.perito ? 'Perito: ' + estado.perito : '', 'sub'));
+    if (aviso) v.appendChild(texto('div', aviso, 'aviso'));
+    var p = texto('div', '', 'panel cita');
+    p.appendChild(texto('strong', estado.cita.etiqueta + ' a las ' + estado.cita.hora));
+    v.appendChild(p);
+    if (estado.confirmacion) v.appendChild(texto('p', estado.confirmacion));
+    if (estado.cita.puedeCambiar) {
+      v.appendChild(boton('Cambiar la cita', 'btn', null, function () {
+        cambiando = true; huecoElegido = null; aviso = ''; pintar();
+      }));
+    }
+  }
+
+  function recibir(r) {
+    if (r.motivo === 'enlace') {
+      pintarError('Enlace no válido', 'Compruebe el enlace recibido o contacte con el perito por WhatsApp.');
+      return;
+    }
+    aviso = r.ok ? '' : (AVISOS[r.motivo] || '');
+    if (r.dias) {
+      estado = r;
+      if (r.ok) { huecoElegido = null; cambiando = false; }
+      else huecoElegido = null;
+    }
+    pintar();
+  }
+
+  function fallo() {
+    if (estado) {
+      aviso = 'No se ha podido conectar. Compruebe que la reserva aparece confirmada o inténtelo de nuevo.';
+      pintar();
+    } else {
+      pintarError('No se ha podido cargar', 'Compruebe su conexión y vuelva a abrir el enlace.');
+    }
+  }
+
+  function confirmar() {
+    if (!huecoElegido) return;
+    this.disabled = true;
+    this.textContent = 'Reservando…';
+    fetch(API, {
+      method: 'POST',
+      credentials: 'omit',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ t: TOKEN, hueco: huecoElegido.id })
+    }).then(function (r) { return r.json(); }).then(recibir).catch(fallo);
+  }
+
+  if (!TOKEN) {
+    pintarError('Enlace no válido', 'Compruebe el enlace recibido o contacte con el perito por WhatsApp.');
+  } else {
+    fetch(API + '?accion=obtener&t=' + encodeURIComponent(TOKEN), { credentials: 'omit' })
+      .then(function (r) { return r.json(); }).then(recibir).catch(fallo);
+  }
+</script>
+</body>
+</html>
